@@ -1,7 +1,9 @@
 package main
 
 import (
+	"io"
 	"os"
+	"time"
 
 	"fmt"
 	"net/http"
@@ -9,6 +11,8 @@ import (
 	ilog "github.com/pion/ion-log"
 	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media"
+	"github.com/pion/webrtc/v3/pkg/media/h264reader"
 )
 
 var (
@@ -20,9 +24,11 @@ func healthz(w http.ResponseWriter, req *http.Request) {
 }
 
 const (
-	address       = "localhost:50051"
-	audioFileName = "output.ogg"
-	videoFileName = "output.ivf"
+	address           = "localhost:50051"
+	audioFileName     = "output.ogg"
+	videoFileName     = "output.h264"
+	oggPageDuration   = time.Millisecond * 20
+	h264FrameDuration = time.Millisecond * 33
 )
 
 func main() {
@@ -90,6 +96,9 @@ func main() {
 		},
 	}
 
+	mediaEngine := webrtc.MediaEngine{}
+	mediaEngine.RegisterDefaultCodecs()
+
 	connector := sdk.NewConnector(env_addr)
 	rtc := sdk.NewRTC(connector, config)
 
@@ -114,6 +123,43 @@ func main() {
 	_, _ = rtc.Publish(videoTrack, audioTrack)
 
 	// Start pushing buffers on these tracks
+	go func() {
+		// Open a H264 file and start reading using our IVFReader
+		file, h264Err := os.Open(videoFileName)
+		if h264Err != nil {
+			panic(h264Err)
+		}
+
+		h264, h264Err := h264reader.NewReader(file)
+		if h264Err != nil {
+			panic(h264Err)
+		}
+
+		// Wait for connection established
+		// <-iceConnectedCtx.Done()
+
+		// Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
+		// This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
+		//
+		// It is important to use a time.Ticker instead of time.Sleep because
+		// * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
+		// * works around latency issues with Sleep (see https://github.com/golang/go/issues/44343)
+		ticker := time.NewTicker(h264FrameDuration)
+		for ; true; <-ticker.C {
+			nal, h264Err := h264.NextNAL()
+			if h264Err == io.EOF {
+				fmt.Printf("All video frames parsed and sent")
+				os.Exit(0)
+			}
+			if h264Err != nil {
+				panic(h264Err)
+			}
+
+			if h264Err = videoTrack.WriteSample(media.Sample{Data: nal.Data, Duration: time.Second}); h264Err != nil {
+				panic(h264Err)
+			}
+		}
+	}()
 
 	http.HandleFunc("/healthz", healthz)
 	http.ListenAndServe(":8090", nil)

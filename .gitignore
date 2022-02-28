@@ -1,2 +1,9 @@
+*.env
+ion-sfu-send-from-file
+!ion-sfu-send-from-file/
 *.webm
 *.ivf
+*.mp4
+*.mov
+*.h264
+*.mkv
