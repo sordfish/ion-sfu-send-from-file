@@ -23,6 +23,10 @@ func healthz(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "OK\n")
 }
 
+func preview(w http.ResponseWriter, req *http.Request) {
+	http.ServeFile(w, req, "preview.jpg")
+}
+
 const (
 	address           = "localhost:50051"
 	audioFileName     = "output.ogg"
@@ -162,6 +166,7 @@ func main() {
 	}()
 
 	http.HandleFunc("/healthz", healthz)
+	http.HandleFunc("/preview", preview)
 	http.ListenAndServe(":8090", nil)
 
 	select {}
